@@ -56,6 +56,9 @@ if "history" not in st.session_state:
 if "last_hint_source" not in st.session_state:
     st.session_state.last_hint_source = None
 
+if "last_hint_confidence" not in st.session_state:
+    st.session_state.last_hint_confidence = None
+
 if "game_id" not in st.session_state:
     # FIX: AI introduced game_id to change the text input widget key on New Game.
     # Without this, Streamlit kept the old typed value and Submit stayed broken
@@ -80,6 +83,8 @@ with st.expander("Developer Debug Info"):
         st.write("Last hint source: 🤖 AI hint")
     elif st.session_state.last_hint_source == "fallback":
         st.write("Last hint source: ⚙️ fallback hint")
+    if st.session_state.last_hint_confidence is not None:
+        st.write(f"Confidence: {st.session_state.last_hint_confidence:.2f}")
 
 raw_guess = st.text_input(
     "Enter your guess:",
@@ -134,10 +139,11 @@ if submit:
         outcome = check_guess(guess_int, secret)
 
         if show_hint:
-            hint_text, hint_source = get_hint_with_fallback(
+            hint_text, hint_source, hint_confidence = get_hint_with_fallback(
                 outcome, guess_int, low, high, st.session_state.history
             )
             st.session_state.last_hint_source = hint_source
+            st.session_state.last_hint_confidence = hint_confidence
             st.warning(hint_text)
 
         # FIX: attempts is incremented before this point, so passing it directly

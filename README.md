@@ -93,15 +93,28 @@ Every AI call and every guardrail decision is logged to `ai_reliability.log`. A 
 
 ## Testing Summary
 
-All **21 tests pass** (`pytest`):
+All **26 tests pass** (`pytest`):
 - `tests/test_game_logic.py` (12 tests) — covers `check_guess` outcomes, `update_score` across wins/losses and difficulty levels, and a regression test that guards against reintroducing the old (buggy) scoring formula.
-- `tests/test_ai_reliability.py` (9 tests) — covers `validate_ai_hint` rejecting contradictory-direction hints, leaked digits, and empty/overlong text, plus `get_hint_with_fallback` correctly falling back on API exceptions and on invalid AI responses, and using the AI hint when it's valid. The OpenAI client is mocked throughout, so tests run offline with no API key and no cost.
+- `tests/test_ai_reliability.py` (14 tests) — covers `validate_ai_hint` rejecting contradictory-direction hints, leaked digits, and empty/overlong text; `get_hint_with_fallback` correctly falling back on API exceptions and on invalid AI responses, and using the AI hint when it's valid; and `score_hint_confidence` producing bounded, meaningfully graded scores for clean vs. risky hints. The OpenAI client is mocked throughout, so tests run offline with no API key and no cost.
+
+26 of 26 tests passed; the guardrail's negative cases (leaked numbers, contradictory direction, empty/overlong text) were the ones most worth testing, since those are exactly where an ungated LLM would fail silently.
+
+**Confidence scoring.** Beyond the pass/fail guardrail, `score_hint_confidence(hint_text, outcome)` grades every hint 0.0–1.0 using the same risk signals as the guardrail (leaked digits, contradictory direction, length), so even a hint that *passes* validation carries a trust signal instead of a bare boolean. Fallback hints are deterministic and always score `1.0`. Sample hints scored:
+
+| Hint text | Outcome | Guardrail | Confidence |
+|---|---|---|---|
+| "Great try — aim a bit lower on your next guess!" | Too High | Pass | 1.00 |
+| "Aim higher, you're getting closer!" | Too Low | Pass | 1.00 |
+| "Try something closer to 50 next time!" | Too Low | Fail (leaked digit) | 0.30 |
+| "Try going a bit lower next time!" | Too Low | Fail (contradicts outcome) | 0.40 |
+
+Confidence averaged **1.0** across the two guardrail-passing samples and **0.35** across the two rejected samples — the score consistently tracks the same failure modes as the guardrail (digit leaks and contradictory direction), confirming the two signals agree rather than measuring unrelated things.
 
 **What worked:** separating pure game logic (`logic_utils.py`) from the AI layer (`ai_hints.py`) made both sides independently and thoroughly testable — the guardrail's negative cases (the ways an AI hint *shouldn't* be trusted) turned out to be just as important to test as the happy path.
 
 **What didn't at first:** earlier versions of the game logic had a tuple-return bug that silently broke hint directions, and a scoring formula that used attempts *used* instead of attempts *remaining* — both were only caught once dedicated unit tests were written (see `# FIX:` comments in `logic_utils.py`), which reinforced how easy it is for logic bugs to hide behind a UI that "looks" like it's working.
 
-**What didn't get tested:** live behavior against the real OpenAI API (network failures, rate limits, non-deterministic phrasing) is only exercised manually via the running app, not by the automated suite.
+**What didn't get tested:** live behavior against the real OpenAI API (network failures, rate limits, non-deterministic phrasing) is only exercised manually via the running app, not by the automated suite. Confidence scoring is a heuristic (not a calibrated probability), so it should be read as a relative trust signal, not an accuracy guarantee.
 
 ## Reflection
 

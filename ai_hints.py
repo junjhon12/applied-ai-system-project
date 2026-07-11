@@ -73,13 +73,46 @@ def validate_ai_hint(hint_text, outcome):
     return True
 
 
+def score_hint_confidence(hint_text, outcome):
+    """Heuristic confidence (0.0-1.0) that a hint is safe and correct.
+
+    Graded version of the same signals validate_ai_hint checks as a hard
+    gate, so a passing hint can still be flagged as low-confidence.
+    """
+    if not hint_text:
+        return 0.0
+
+    confidence = 1.0
+
+    if re.search(r"\d", hint_text):
+        confidence -= 0.6
+
+    lowered = hint_text.lower()
+    if outcome == "Too High" and any(phrase in lowered for phrase in _TOO_HIGH_CONTRADICTIONS):
+        confidence -= 0.6
+    if outcome == "Too Low" and any(phrase in lowered for phrase in _TOO_LOW_CONTRADICTIONS):
+        confidence -= 0.6
+
+    if len(hint_text) < 10 or len(hint_text) > MAX_HINT_LENGTH:
+        confidence -= 0.3
+
+    if outcome in ("Too High", "Too Low") and not any(
+        phrase in lowered
+        for phrase in _TOO_HIGH_CONTRADICTIONS + _TOO_LOW_CONTRADICTIONS + ["higher", "lower"]
+    ):
+        confidence -= 0.1
+
+    return max(0.0, min(1.0, confidence))
+
+
 def get_hint_with_fallback(outcome, guess, low, high, history, client=None):
-    """Return (hint_text, source) where source is 'ai' or 'fallback'."""
+    """Return (hint_text, source, confidence) where source is 'ai' or 'fallback'."""
     ai_hint = generate_ai_hint(outcome, guess, low, high, history, client=client)
 
     if validate_ai_hint(ai_hint, outcome):
-        logger.info("Guardrail passed | outcome=%s", outcome)
-        return ai_hint, "ai"
+        confidence = score_hint_confidence(ai_hint, outcome)
+        logger.info("Guardrail passed | outcome=%s | confidence=%.2f", outcome, confidence)
+        return ai_hint, "ai", confidence
 
-    logger.info("Guardrail failed or AI unavailable, using fallback | outcome=%s", outcome)
-    return get_hint_message(outcome), "fallback"
+    logger.info("Guardrail failed or AI unavailable, using fallback | outcome=%s | confidence=1.00", outcome)
+    return get_hint_message(outcome), "fallback", 1.0
