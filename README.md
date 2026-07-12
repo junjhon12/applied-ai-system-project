@@ -116,6 +116,98 @@ Confidence averaged **1.0** across the two guardrail-passing samples and **0.35*
 
 **What didn't get tested:** live behavior against the real OpenAI API (network failures, rate limits, non-deterministic phrasing) is only exercised manually via the running app, not by the automated suite. Confidence scoring is a heuristic (not a calibrated probability), so it should be read as a relative trust signal, not an accuracy guarantee.
 
+## Reproducible Execution Evidence
+
+This section contains real, captured command output — not hand-typed examples — so the system can be verified without running anything or watching a video.
+
+**1. Test suite run**
+
+```
+$ python -m pytest -v
+
+============================= test session starts =============================
+platform win32 -- Python 3.14.4, pytest-9.0.3, pluggy-1.6.0
+rootdir: C:\AI110\applied-ai-system-project
+plugins: anyio-4.13.0
+collecting ... collected 26 items
+
+tests/test_ai_reliability.py::test_validate_hint_rejects_contradictory_direction PASSED [  3%]
+tests/test_ai_reliability.py::test_validate_hint_rejects_leaked_number PASSED [  7%]
+tests/test_ai_reliability.py::test_validate_hint_rejects_empty PASSED    [ 11%]
+tests/test_ai_reliability.py::test_validate_hint_rejects_overlong PASSED [ 15%]
+tests/test_ai_reliability.py::test_validate_hint_accepts_consistent_hint PASSED [ 19%]
+tests/test_ai_reliability.py::test_fallback_used_when_ai_raises PASSED   [ 23%]
+tests/test_ai_reliability.py::test_fallback_used_when_ai_response_invalid PASSED [ 26%]
+tests/test_ai_reliability.py::test_ai_hint_used_when_response_valid PASSED [ 30%]
+tests/test_ai_reliability.py::test_consistency_across_repeated_calls PASSED [ 34%]
+tests/test_ai_reliability.py::test_confidence_high_for_clean_encouraging_hint PASSED [ 38%]
+tests/test_ai_reliability.py::test_confidence_low_for_leaked_digit PASSED [ 42%]
+tests/test_ai_reliability.py::test_confidence_low_for_contradictory_direction PASSED [ 46%]
+tests/test_ai_reliability.py::test_confidence_zero_for_empty_hint PASSED [ 50%]
+tests/test_ai_reliability.py::test_confidence_always_within_bounds PASSED [ 53%]
+tests/test_game_logic.py::test_winning_guess PASSED                      [ 57%]
+tests/test_game_logic.py::test_guess_too_high PASSED                     [ 61%]
+tests/test_game_logic.py::test_guess_too_low PASSED                      [ 65%]
+tests/test_game_logic.py::test_score_equals_attempts_remaining PASSED    [ 69%]
+tests/test_game_logic.py::test_score_wins_on_first_attempt PASSED        [ 73%]
+tests/test_game_logic.py::test_score_wins_on_last_attempt PASSED         [ 76%]
+tests/test_game_logic.py::test_score_uses_attempts_remaining_not_attempts_used PASSED [ 80%]
+tests/test_game_logic.py::test_score_unchanged_on_too_high PASSED        [ 84%]
+tests/test_game_logic.py::test_score_unchanged_on_too_low PASSED         [ 88%]
+tests/test_game_logic.py::test_score_unchanged_on_loss_nonzero_starting_score PASSED [ 92%]
+tests/test_game_logic.py::test_score_easy_difficulty PASSED              [ 96%]
+tests/test_game_logic.py::test_score_hard_difficulty PASSED              [100%]
+
+============================= 26 passed in 0.06s ==============================
+```
+
+**2. End-to-end demo run** — `demo_run.py` (new, committed script) drives the real game logic (`check_guess`, `update_score`) and the real hint pipeline (`get_hint_with_fallback`) through 3 scripted guesses, using a mocked OpenAI client so it's deterministic, free, and needs no API key:
+
+```
+$ python demo_run.py
+
+Glitchy Guesser — AI hint reliability demo
+
+=== Case 1: Guardrail passes ===
+Input:  secret=42, guess=70, range=(1,100), attempt=3/8
+Outcome: Too High
+Hint shown: "Great try — aim a bit lower on your next guess!" (source=ai, confidence=1.00)
+Score: 0 -> 0
+
+=== Case 2: Guardrail fails (leaked digit) -> fallback ===
+Input:  secret=42, guess=10, range=(1,100), attempt=4/8
+Outcome: Too Low
+Hint shown: "📈 Go HIGHER!" (source=fallback, confidence=1.00)
+Score: 2 -> 2
+
+=== Case 3: AI call raises exception -> fallback ===
+Input:  secret=42, guess=42, range=(1,100), attempt=6/8
+Outcome: Win
+Hint shown: "🎉 Correct!" (source=fallback, confidence=1.00)
+Score: 2 -> 4
+
+See ai_reliability.log for the corresponding logged guardrail decisions.
+```
+
+**3. Matching entries from `ai_reliability.log`** (produced by the run above — every AI call and guardrail decision is logged):
+
+```
+2026-07-11 20:07:02,741 INFO AI call ok | prompt=...guessed 70 and the outcome was 'Too High'... | response=Great try — aim a bit lower on your next guess!
+2026-07-11 20:07:02,741 INFO Guardrail passed | outcome=Too High | confidence=1.00
+2026-07-11 20:07:02,742 INFO AI call ok | prompt=...guessed 10 and the outcome was 'Too Low'... | response=Try something closer to 50 next time!
+2026-07-11 20:07:02,742 INFO Guardrail failed or AI unavailable, using fallback | outcome=Too Low | confidence=1.00
+2026-07-11 20:07:02,742 WARNING AI call failed | prompt=...guessed 42 and the outcome was 'Win'... | error=API down
+2026-07-11 20:07:02,742 INFO Guardrail failed or AI unavailable, using fallback | outcome=Win | confidence=1.00
+```
+
+**What this shows:** the guardrail correctly passes a clean AI hint (Case 1), correctly rejects one that leaks the secret number and substitutes the deterministic fallback (Case 2), and the same fallback path fires cleanly when the AI call itself raises an exception (Case 3) — all three decisions are logged in real time, and the confidence score agrees with the guardrail's pass/fail verdict in every case (1.00 for the accepted hint, 1.00 for both deterministic fallbacks, which are always maximally trusted by design).
+
+## Portfolio
+
+- **GitHub repo:** [https://github.com/junjhon12/applied-ai-system-project](https://github.com/junjhon12/applied-ai-system-project)
+
+**Reflection — what this project says about me as an AI engineer:** I don't treat an LLM's output as a trusted service response — I treat it the same way I'd treat unvalidated user input: something that has to pass an explicit check before it reaches anyone. That's why `validate_ai_hint` is a hard gate (reject leaked digits, contradictions, empty/overlong text) backed by a graded `score_hint_confidence` signal and a deterministic fallback that can never make the system less correct than before the AI feature existed, with every decision logged so reliability is auditable after the fact, not just observed live. I also lean on tests to catch what manual play won't — the tuple-return and attempts-used-vs-remaining bugs in `logic_utils.py` were only caught once dedicated unit tests existed, which reinforces that "it looks like it's working" and "it's correct" are different claims. At the same time, I'm upfront in `model_card.md` about where this system is weak — the guardrail is regex/keyword-based and would miss synonyms or non-English phrasing, and the confidence score is a heuristic, not a calibrated probability — because shipping something safe also means being honest about its limits.
+
 ## Reflection
 
 Building the guardrail and fallback layer was a useful exercise in treating LLM output as untrusted input rather than a trusted service response — the same mindset as validating user input, just applied to a model's output instead. It reinforced that a small amount of deterministic scaffolding (a validator plus a known-safe fallback) can make an otherwise unpredictable AI feature safe to ship, even in a small project. The graded responsible-AI reflection — covering AI collaboration, a helpful and a flawed AI suggestion, and system limitations — is documented separately in [`model_card.md`](model_card.md).
